@@ -30,7 +30,7 @@ and the correlating *.conf-files.
 
 To reproduce the minimal, faulty example:
 
-*wget http://github.com/mue-jan/dbus-missing-signals-or-fd-issue.git*  
+*wget https://github.com/mue-jan/dbus-missing-signals-or-fd-issue/blob/master/files.zip*  
 *unzip files.zip*  
 *move \*.conf files to /etc/dbus-1/system.d/*  
 *make*  

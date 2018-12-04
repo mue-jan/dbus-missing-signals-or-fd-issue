@@ -227,7 +227,6 @@ static int transmit(sd_bus_message *dbus_msg, void *userdata,
     int ret = -1;
     int value = 0;
     sd_bus_message *dbus_ret_msg = NULL;
-    sd_bus_message *dbus_signal = NULL;
 
     ret = sd_bus_message_read_basic(dbus_msg, SD_BUS_TYPE_INT32, &value);
     if (ret < 0) {
@@ -236,37 +235,6 @@ static int transmit(sd_bus_message *dbus_msg, void *userdata,
     }
 
     value++;
-
-    printf("    RECEIVER - dbus messages arrived, sending signal ...\n");
-
-    // SEND SIGNAL
-    {
-        ret = sd_bus_message_new_signal(sdbus_obj, &dbus_signal, object_path,
-                                        interface_name, "test_signal");
-        if (ret < 0) {
-            printf("sd_bus_message_new_signal failed\n");
-            exit(1);
-        }
-
-        ret = sd_bus_message_append_basic(dbus_signal, SD_BUS_TYPE_INT32,
-                                            &value);
-        if (ret < 0) {
-            printf("sd_bus_message_append_basic failed\n");
-            exit(1);
-        }
-
-        ret = sd_bus_send(NULL, dbus_signal, NULL);
-        if (ret < 0) {
-            printf("sd_bus_send failed\n");
-            exit(1);
-        }
-
-        sd_bus_message_unref(dbus_signal);
-    }
-
-    printf("    RECEIVER - signal sent, going to sleep ...\n");
-    usleep(5000);
-    printf("    RECEIVER - slept for 5ms, sending dbus-msg response ...\n");
 
     ret = sd_bus_message_append_basic(dbus_ret_msg, SD_BUS_TYPE_INT32, &value);
     if (ret < 0) {

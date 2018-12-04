@@ -32,8 +32,10 @@ To reproduce the minimal, faulty example:
 
 *wget https://github.com/mue-jan/dbus-missing-signals-or-fd-issue/raw/master/files.zip*  
 *unzip files.zip*  
-*move \*.conf files to /etc/dbus-1/system.d/*  
+*sudo cp \*.conf /etc/dbus-1/system.d/*  
 *make*  
-*start sender and receiver applications*  
-**see signals are not recognised by select(), same for epoll() ...**
+*./mbsp_signal_receiver*  
+*./mbsp_signal_sender*  
+
+**Compare behavior to source-code - expecting the reception of signals**
 

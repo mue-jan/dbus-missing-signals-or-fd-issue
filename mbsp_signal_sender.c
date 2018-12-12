@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/epoll.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/timerfd.h>
 #include <sys/select.h>
 #include <systemd/sd-bus.h>
@@ -49,30 +51,31 @@ int main(int argc, char *argv[])
 {
     int ret = 0;
 
-    fd_set readfds;
-    int nfds, sdbus_fd, timer_fd, ready;
+    static int epoll_fd = -1;
+    static int sdbus_fd = -1;
+    static int timer_fd = -1;
+
+    static struct epoll_event event_array[2];
+    static struct epoll_event *events;
 
 
-    // initialize DBus
+// initialize DBus
     ret = sd_bus_open_system(&sdbus_obj);
     if (ret < 0) {
         printf("issue 1 - ret: %i\n", ret);
         exit(1);
     }
-
     ret = sd_bus_add_object_vtable(sdbus_obj, &dbus_slot, object_path,
                                     interface_name, object_vtable, NULL);
     if (ret < 0) {
         printf("issue 2 - ret: %i\n", ret);
         exit(1);
     }
-
     ret = sd_bus_request_name(sdbus_obj, interface_name, 0);
     if (ret < 0) {
         printf("issue 3 - ret: %i\n", ret);
         exit(1);
     }
-
     ret = sd_bus_add_match(sdbus_obj, &dbus_slot,
                             "type='signal',member='test_signal'",
                             sdbus_signal_callback, NULL);
@@ -81,19 +84,64 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    sdbus_fd = sd_bus_get_fd(sdbus_obj);
-    if (sdbus_fd < 0)
-    {
-        printf("issue 5\n");
-        exit(1);
-    }
-    nfds = sdbus_fd +1;
 
+/** switched to epoll-approach **/
+
+// epoll_fd
+    epoll_fd = epoll_create1 (0);
+    if (epoll_fd < 0) {
+        return -1;
+    }
+    // don't pass epoll's fd to child processes
+    ret = fcntl(epoll_fd, F_SETFD, (fcntl(epoll_fd, F_GETFD) | FD_CLOEXEC));
+    if (ret < 0) {
+        return -1;
+    }
+// dbus_fd
+    sdbus_fd = sd_bus_get_fd(sdbus_obj);
+    if (sdbus_obj < 0)
+    {
+        return -1;
+    }
+    // make fd unblocking
+    ret = fcntl (sdbus_fd, F_SETFL, fcntl (sdbus_fd, F_GETFL, 0) | O_NONBLOCK);
+    if (ret == -1) {
+        return -1;
+    }
+    // don't pass fds to child processes
+    ret = fcntl(sdbus_fd, F_SETFD, (fcntl(sdbus_fd, F_GETFD) | FD_CLOEXEC));
+    if (ret < 0) {
+        return -1;
+    }
+    // add to event-struct
+    event_array[0].data.fd = sdbus_fd;
+    event_array[0].events = sd_bus_get_events(sdbus_obj) | EPOLLIN | EPOLLET ;  // EDGE-TRIGGERED!
+    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sdbus_fd, &event_array[0]);
+    if (ret < 0) {
+       return -1;
+    }
+// timer_fd
     timer_fd = timerfd_create (CLOCK_MONOTONIC, 0);
     if (timer_fd < 0)
     {
-        printf("issue 6\n");
-        exit(1);
+        return -1;
+    }
+    // make fd unblocking
+    ret = fcntl (timer_fd, F_SETFL, fcntl (timer_fd, F_GETFL, 0) | O_NONBLOCK);
+    if (ret == -1) {
+        return -1;
+    }
+    // don't pass fds to child processes
+    ret = fcntl(timer_fd, F_SETFD, (fcntl(timer_fd, F_GETFD) | FD_CLOEXEC));
+    if (ret < 0) {
+        return -1;
+    }
+    // add to event-struct
+    event_array[1].data.fd = timer_fd;
+    event_array[1].events = EPOLLIN | EPOLLET;           // EDGE-TRIGGERED!
+    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, timer_fd, &event_array[1]);
+    if (ret < 0) {
+       return -1;
     }
     ret = set_timer(timer_fd, 1000);
     if (ret < 0)
@@ -102,45 +150,51 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-    if (timer_fd > sdbus_fd) {
-        nfds = timer_fd +1;
-    }
+// buffer where events are returned to
+    events = calloc(2, sizeof(struct epoll_event));
 
-
+    // event loop
     while (1)
     {
-        FD_ZERO(&readfds);
-        FD_SET(sdbus_fd, &readfds);
-        FD_SET(timer_fd, &readfds);
+        int fd_ready = 0, i;
 
-        ready = select(nfds, &readfds, NULL, NULL, NULL);
-        if (ready == -1)            // error
+        // - 1 = block indefinitely,
+        //   0 = return immediately,
+        // > 0 = block for x ms
+        fd_ready = epoll_wait(epoll_fd, events, 2, -1);
+
+        for (i = 0; i < fd_ready; i++)
         {
-            printf("issue 8\n");
-            exit(1);
-        } else if (ready) {         // data available
-            if (FD_ISSET(sdbus_fd, &readfds)) {      // dbus-fd ready
+            // ERROR
+            if (    (events[i].events & EPOLLERR) ||
+                    (events[i].events & EPOLLHUP) ||
+                  (!(events[i].events & EPOLLIN))   ) {
+                // An error has occured on this fd
+                fprintf (stderr, "epoll error - fd: %i\n", events[i].data.fd);
+                close (events[i].data.fd);
+                continue;
+
+            } else if (sdbus_fd == events[i].data.fd) {                 // JBUS
+                printf("Call on sd_bus-filedescriptor!\n");
                 ret = handle_dbus_fd();
-                if (ret < 0)
-                {
+                if (ret < 0) {
                     // any reaction?!
-                    printf("Issue with sdbus-routine!\n");
+                    printf("Issue with sd_bus-filedescriptor!\n\n");
                 }
-            }
-            if (FD_ISSET(timer_fd, &readfds)) {      // timer-fd ready
+            } else if (timer_fd == events[i].data.fd) {                // TIMER
+                printf("Call on timer-filedescriptor!\n");
                 ret = handle_timer_fd(timer_fd, 1000);
-                if (ret < 0)
-                {
+//                handle_dbus_fd();     // enabled --> receive the "missing signals"
+                if (ret < 0) {
                     // any reaction?!
-                    printf("Issue with timer-routine\n\n");
+                    printf("Issue with timer-filedescriptor!\n\n");
                 }
+            } else {
+                // nothing yet ... normally probably to handle
+                // fd-reads via "read(events[i].data.fd ... )
             }
-        } else {                    // timeout
-            printf("select timed out (5s).\nBye\n");
-            break;
         }
     }
-
 
     close_fd(sdbus_fd);
     close_fd(timer_fd);
@@ -252,8 +306,6 @@ static int transmit(sd_bus_message *dbus_msg, void *userdata,
 
     return 0;
 }
-
-
 
 static int handle_dbus_fd(void)
 {

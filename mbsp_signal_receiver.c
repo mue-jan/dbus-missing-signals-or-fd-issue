@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/timerfd.h>
 #include <systemd/sd-bus.h>
 
 
@@ -71,34 +72,62 @@ int main(int argc, char *argv[])
     nfds = sdbus_fd +1;
 
     while (1)
-        {
-            FD_ZERO(&readfds);
-            FD_SET(sdbus_fd, &readfds);
+    {
+        FD_ZERO(&readfds);
+        FD_SET(sdbus_fd, &readfds);
 
-            ready = select(nfds, &readfds, NULL, NULL, NULL);
-            if (ready == -1)            // error
-            {
-                printf("issue 8\n");
-                exit(1);
-            } else if (ready) {         // data available
-                if (FD_ISSET(sdbus_fd, &readfds)) {      // dbus-fd ready
-                    ret = handle_dbus_fd();
-                    if (ret < 0)
-                    {
-                        // any reaction?!
-                        printf("Issue with sdbus-routine!\n");
-                    }
+        ready = select(nfds, &readfds, NULL, NULL, NULL);
+        if (ready == -1)            // error
+        {
+            printf("issue 8\n");
+            exit(1);
+        } else if (ready) {         // data available
+            if (FD_ISSET(sdbus_fd, &readfds)) {      // dbus-fd ready
+                ret = handle_dbus_fd();
+                if (ret < 0)
+                {
+                    // any reaction?!
+                    printf("Issue with sdbus-routine!\n");
                 }
-            } else {                    // timeout
-                printf("select timed out (5s).\nBye\n");
-                break;
             }
+        } else {                    // timeout
+            printf("select timed out (5s).\nBye\n");
+            break;
         }
 
+//        // SEND SIGNAL WHICH WILL   N O T   BE LOST
+//        {
+//            sd_bus_message *dbus_signal = NULL;
+//            int value = 4;
+//            ret = sd_bus_message_new_signal(sdbus_obj, &dbus_signal, object_path,
+//                                            interface_name, "test_signal");
+//            if (ret < 0) {
+//                printf("sd_bus_message_new_signal failed\n");
+//                exit(1);
+//            }
+//
+//            ret = sd_bus_message_append_basic(dbus_signal, SD_BUS_TYPE_INT32,
+//                                                &value);
+//            if (ret < 0) {
+//                printf("sd_bus_message_append_basic failed\n");
+//                exit(1);
+//            }
+//
+//            ret = sd_bus_send(NULL, dbus_signal, NULL);
+//            if (ret < 0) {
+//                printf("sd_bus_send failed\n");
+//                exit(1);
+//            }
+//
+//            sd_bus_message_unref(dbus_signal);
+//
+//            printf("\n\nSignal sent!\n\n");
+//        }
+    }
 
-        close_fd(sdbus_fd);
+    close_fd(sdbus_fd);
 
-        return EXIT_SUCCESS;
+    return EXIT_SUCCESS;
 }
 
 
@@ -124,7 +153,7 @@ static int transmit(sd_bus_message *dbus_msg, void *userdata,
     printf("\n    RECEIVER - received dbus-message \"%i\"\n", value);
     printf("               Responding with signal within SD_BUS_METHOD\n");
 
-    // SEND SIGNAL
+    // SEND SIGNAL WHICH WILL BE LOST
     {
         ret = sd_bus_message_new_signal(sdbus_obj, &dbus_signal, object_path,
                                         interface_name, "test_signal");

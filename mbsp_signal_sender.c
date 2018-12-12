@@ -150,6 +150,8 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    printf("\n-> sd_bus_get_events(sdbus_obj): %i\n\n", sd_bus_get_events(sdbus_obj));
+
 // buffer where events are returned to
     events = calloc(2, sizeof(struct epoll_event));
 

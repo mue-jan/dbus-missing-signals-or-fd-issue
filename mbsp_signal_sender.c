@@ -1,8 +1,11 @@
 
+//#define _GNU_SOURCE
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <poll.h>
 #include <sys/epoll.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -46,18 +49,18 @@ static const sd_bus_vtable object_vtable[] =
 
 static int missing_signals = 0;
 
+enum fds_used{
+    SDBUS,
+    TIMER,
+    MAX_FD
+};
 
 int main(int argc, char *argv[])
 {
     int ret = 0;
 
-    static int epoll_fd = -1;
-    static int sdbus_fd = -1;
-    static int timer_fd = -1;
-
-    static struct epoll_event event_array[2];
-    static struct epoll_event *events;
-
+    struct pollfd fds[MAX_FD];       // sdbus == 0, timer == 1
+    nfds_t nfds = MAX_FD;
 
 // initialize DBus
     ret = sd_bus_open_system(&sdbus_obj);
@@ -84,122 +87,91 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-
-/** switched to epoll-approach **/
-
-// epoll_fd
-    epoll_fd = epoll_create1 (0);
-    if (epoll_fd < 0) {
-        return -1;
-    }
-    // don't pass epoll's fd to child processes
-    ret = fcntl(epoll_fd, F_SETFD, (fcntl(epoll_fd, F_GETFD) | FD_CLOEXEC));
-    if (ret < 0) {
-        return -1;
-    }
-// dbus_fd
-    sdbus_fd = sd_bus_get_fd(sdbus_obj);
-    if (sdbus_obj < 0)
+/** switched to ppoll-approach **/
+    while(1)
     {
-        return -1;
-    }
-    // make fd unblocking
-    ret = fcntl (sdbus_fd, F_SETFL, fcntl (sdbus_fd, F_GETFL, 0) | O_NONBLOCK);
-    if (ret == -1) {
-        return -1;
-    }
-    // don't pass fds to child processes
-    ret = fcntl(sdbus_fd, F_SETFD, (fcntl(sdbus_fd, F_GETFD) | FD_CLOEXEC));
-    if (ret < 0) {
-        return -1;
-    }
-    // add to event-struct
-    event_array[0].data.fd = sdbus_fd;
-    event_array[0].events = sd_bus_get_events(sdbus_obj) | EPOLLIN | EPOLLET ;  // EDGE-TRIGGERED!
-    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sdbus_fd, &event_array[0]);
-    if (ret < 0) {
-       return -1;
-    }
-// timer_fd
-    timer_fd = timerfd_create (CLOCK_MONOTONIC, 0);
-    if (timer_fd < 0)
-    {
-        return -1;
-    }
-    // make fd unblocking
-    ret = fcntl (timer_fd, F_SETFL, fcntl (timer_fd, F_GETFL, 0) | O_NONBLOCK);
-    if (ret == -1) {
-        return -1;
-    }
-    // don't pass fds to child processes
-    ret = fcntl(timer_fd, F_SETFD, (fcntl(timer_fd, F_GETFD) | FD_CLOEXEC));
-    if (ret < 0) {
-        return -1;
-    }
-    // add to event-struct
-    event_array[1].data.fd = timer_fd;
-    event_array[1].events = EPOLLIN | EPOLLET;           // EDGE-TRIGGERED!
-    ret = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, timer_fd, &event_array[1]);
-    if (ret < 0) {
-       return -1;
-    }
-    ret = set_timer(timer_fd, 1000);
-    if (ret < 0)
-    {
-        printf("issue 7\n");
-        exit(1);
-    }
+        int i;
 
-    printf("\n-> sd_bus_get_events(sdbus_obj): %i\n\n", sd_bus_get_events(sdbus_obj));
+// (RE-)CONFIGURE STRUCT POLLFDs
+    // sdbus
+        fds[SDBUS].fd = sd_bus_get_fd(sdbus_obj);
+        if (fds[SDBUS].fd <= 0)
+            printf("issue sd_bus_get_fd\n");
+        // make fd unblocking
+        ret = fcntl (fds[SDBUS].fd, F_SETFL, fcntl (fds[SDBUS].fd, F_GETFL, 0) | O_NONBLOCK);
+        if (ret == -1)
+            printf("issue sdbus-fcntl\n");
+        fds[SDBUS].events = sd_bus_get_events(sdbus_obj) | POLLIN;   // fixme: printf?!
+        printf("sd_bus_get_events(sdbus_obj): %i\n", sd_bus_get_events(sdbus_obj));
+        if (!fds[SDBUS].events)
+            printf("issue with fds[JBUS].events\n");
+        fds[SDBUS].revents = 0;
+    // timer
+        fds[TIMER].fd = timerfd_create (CLOCK_MONOTONIC, 0);
+        if (fds[TIMER].fd < 0)
+            printf("issue timerfd_create\n");
+        // make fd unblocking
+        ret = fcntl (fds[TIMER].fd, F_SETFL, fcntl (fds[TIMER].fd, F_GETFL, 0) | O_NONBLOCK);
+        if (ret == -1) {
+            return -1;
+        }
+        fds[TIMER].events = POLLIN;   // fixme: ?!
+        fds[TIMER].revents = 0;
+        ret = set_timer(fds[TIMER].fd, 1000);
+        if (ret < 0)
+            printf("issue set_timer\n");
 
-// buffer where events are returned to
-    events = calloc(2, sizeof(struct epoll_event));
-
-    // event loop
-    while (1)
-    {
-        int fd_ready = 0, i;
-
+// POLL-CALL
         // - 1 = block indefinitely,
         //   0 = return immediately,
         // > 0 = block for x ms
-        fd_ready = epoll_wait(epoll_fd, events, 2, -1);
-
-        for (i = 0; i < fd_ready; i++)
+        if (poll(fds, nfds, -1) < 0)
         {
-            // ERROR
-            if (    (events[i].events & EPOLLERR) ||
-                    (events[i].events & EPOLLHUP) ||
-                  (!(events[i].events & EPOLLIN))   ) {
-                // An error has occured on this fd
-                fprintf (stderr, "epoll error - fd: %i\n", events[i].data.fd);
-                close (events[i].data.fd);
-                continue;
+            printf("poll error!\n");
+            exit(3);
+        }
 
-            } else if (sdbus_fd == events[i].data.fd) {                 // JBUS
-                printf("Call on sd_bus-filedescriptor!\n");
-                ret = handle_dbus_fd();
-                if (ret < 0) {
-                    // any reaction?!
-                    printf("Issue with sd_bus-filedescriptor!\n\n");
-                }
-            } else if (timer_fd == events[i].data.fd) {                // TIMER
-                printf("Call on timer-filedescriptor!\n");
-                ret = handle_timer_fd(timer_fd, 1000);
-//                handle_dbus_fd();     // enabled --> receive the "missing signals"
-                if (ret < 0) {
-                    // any reaction?!
-                    printf("Issue with timer-filedescriptor!\n\n");
-                }
-            } else {
-                // nothing yet ... normally probably to handle
-                // fd-reads via "read(events[i].data.fd ... )
+        for (i = 0; i < nfds; i++)
+        {
+            switch (fds[i].revents)
+            {
+                case 0:                 // no event
+                    break;
+                case POLLERR:
+                case POLLHUP:
+                    // An error has occured on this fd
+                    fprintf (stderr, "epoll error - fd: %i\n", i);
+                    close (fds[i].fd);
+                    break;
+                case POLLIN:
+                    if (i == SDBUS)
+                    {
+                        printf("Call on sd_bus-filedescriptor!\n");
+                        ret = handle_dbus_fd();
+                        if (ret < 0) {
+                            printf("Issue with sd_bus-filedescriptor!\n\n");
+                        }
+                    }
+                    else if (i == TIMER)
+                    {
+                        printf("Call on timer-filedescriptor!\n");
+                        ret = handle_timer_fd(fds[TIMER].fd, 1000);
+// FIXME: calling handle_dbus_fd() manually will cause signal reception
+//                        handle_dbus_fd();
+                        if (ret < 0) {
+                            printf("Issue with timer-filedescriptor!\n\n");
+                        }
+                    }
+                    break;
+                default:
+                    printf("default case?! - fds[i].revents: %i\n", fds[i].revents);
+                    break;
             }
         }
     }
 
-    close_fd(sdbus_fd);
-    close_fd(timer_fd);
+    close_fd(fds[SDBUS].fd);
+    close_fd(fds[TIMER].fd);
 
     return EXIT_SUCCESS;
 }
@@ -325,16 +297,6 @@ static int handle_dbus_fd(void)
 
 static int handle_timer_fd(int timer_fd, int time_in_ms)
 {
-    int ret = -1;
-
-    // reset timer to given time
-    ret = set_timer(timer_fd, time_in_ms);
-    if (ret < 0)
-    {
-        printf("Had issues with handle_sd_bus()\n");
-        return -1;
-    }
-
     example_communication();
 
     return 0;

@@ -29,13 +29,11 @@ and the correlating *.conf-files.
 
 To reproduce the minimal, faulty example:
 
-*wget https://github.com/mue-jan/dbus-missing-signals-or-fd-issue/raw/master/files.zip*  
-*unzip files.zip*  
+*wget https://github.com/mue-jan/dbus-missing-signals-or-fd-issue/archive/master.zip*  
+*unzip master.zip*  
 *sudo cp \*.conf /etc/dbus-1/system.d/*  
 *make*  
-*// start applications in different terminals*  
+*# start applications in different terminals*  
 *./mbsp_signal_receiver*  
 *./mbsp_signal_sender*  
-
-**Compare behavior to the source-code - I was expecting the reception of signals**
-
+*# observe the sender for 10s, missing every signal being sent by the receiver* 

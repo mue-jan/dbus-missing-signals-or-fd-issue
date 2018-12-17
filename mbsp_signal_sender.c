@@ -62,23 +62,26 @@ int main(int argc, char *argv[])
     struct pollfd fds[MAX_FD];       // sdbus == 0, timer == 1
     nfds_t nfds = MAX_FD;
 
-// initialize DBus
+    // initialize DBus
     ret = sd_bus_open_system(&sdbus_obj);
     if (ret < 0) {
         printf("issue 1 - ret: %i\n", ret);
         exit(1);
     }
+
     ret = sd_bus_add_object_vtable(sdbus_obj, &dbus_slot, object_path,
                                     interface_name, object_vtable, NULL);
     if (ret < 0) {
         printf("issue 2 - ret: %i\n", ret);
         exit(1);
     }
+
     ret = sd_bus_request_name(sdbus_obj, interface_name, 0);
     if (ret < 0) {
         printf("issue 3 - ret: %i\n", ret);
         exit(1);
     }
+
     ret = sd_bus_add_match(sdbus_obj, &dbus_slot,
                             "type='signal',member='test_signal'",
                             sdbus_signal_callback, NULL);
@@ -87,41 +90,48 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
-/** switched to ppoll-approach **/
+    /** switched to ppoll-approach **/
     while(1)
     {
         int i;
 
-// (RE-)CONFIGURE STRUCT POLLFDs
-    // sdbus
+        // (RE-)CONFIGURE STRUCT POLLFDs
+        // sdbus
         fds[SDBUS].fd = sd_bus_get_fd(sdbus_obj);
         if (fds[SDBUS].fd <= 0)
             printf("issue sd_bus_get_fd\n");
+
         // make fd unblocking
-        ret = fcntl (fds[SDBUS].fd, F_SETFL, fcntl (fds[SDBUS].fd, F_GETFL, 0) | O_NONBLOCK);
+        ret = fcntl(fds[SDBUS].fd, F_SETFL, fcntl(fds[SDBUS].fd, F_GETFL, 0) | O_NONBLOCK);
         if (ret == -1)
             printf("issue sdbus-fcntl\n");
+
         fds[SDBUS].events = sd_bus_get_events(sdbus_obj) | POLLIN;   // fixme: printf?!
-        printf("sd_bus_get_events(sdbus_obj): %i\n", sd_bus_get_events(sdbus_obj));
         if (!fds[SDBUS].events)
             printf("issue with fds[JBUS].events\n");
+        printf("sd_bus_get_events(sdbus_obj): %i\n", sd_bus_get_events(sdbus_obj));
+
         fds[SDBUS].revents = 0;
-    // timer
-        fds[TIMER].fd = timerfd_create (CLOCK_MONOTONIC, 0);
+
+        // timer
+        fds[TIMER].fd = timerfd_create(CLOCK_MONOTONIC, 0);
         if (fds[TIMER].fd < 0)
             printf("issue timerfd_create\n");
+
         // make fd unblocking
-        ret = fcntl (fds[TIMER].fd, F_SETFL, fcntl (fds[TIMER].fd, F_GETFL, 0) | O_NONBLOCK);
+        ret = fcntl(fds[TIMER].fd, F_SETFL, fcntl(fds[TIMER].fd, F_GETFL, 0) | O_NONBLOCK);
         if (ret == -1) {
             return -1;
         }
+
         fds[TIMER].events = POLLIN;   // fixme: ?!
         fds[TIMER].revents = 0;
+
         ret = set_timer(fds[TIMER].fd, 1000);
         if (ret < 0)
             printf("issue set_timer\n");
 
-// POLL-CALL
+        // POLL-CALL
         // - 1 = block indefinitely,
         //   0 = return immediately,
         // > 0 = block for x ms
@@ -137,16 +147,19 @@ int main(int argc, char *argv[])
             {
                 case 0:                 // no event
                     break;
+
                 case POLLERR:
                 case POLLHUP:
                     // An error has occured on this fd
-                    fprintf (stderr, "epoll error - fd: %i\n", i);
-                    close (fds[i].fd);
+                    printf("epoll error - fd: %i\n", i);
+                    close(fds[i].fd);
                     break;
+
                 case POLLIN:
                     if (i == SDBUS)
                     {
                         printf("Call on sd_bus-filedescriptor!\n");
+
                         ret = handle_dbus_fd();
                         if (ret < 0) {
                             printf("Issue with sd_bus-filedescriptor!\n\n");
@@ -155,14 +168,18 @@ int main(int argc, char *argv[])
                     else if (i == TIMER)
                     {
                         printf("Call on timer-filedescriptor!\n");
+
                         ret = handle_timer_fd(fds[TIMER].fd, 1000);
-// FIXME: calling handle_dbus_fd() manually will cause signal reception
-//                        handle_dbus_fd();
                         if (ret < 0) {
                             printf("Issue with timer-filedescriptor!\n\n");
                         }
+
+                        // FIXME: calling handle_dbus_fd() manually will cause signal reception
+                        // handle_dbus_fd();
+
                     }
                     break;
+
                 default:
                     printf("default case?! - fds[i].revents: %i\n", fds[i].revents);
                     break;

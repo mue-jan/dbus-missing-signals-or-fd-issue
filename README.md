@@ -4,7 +4,7 @@ This project shall show an issue I faced when working with dbus-signals while li
 An application does not receive dbus signals on its dbus file descriptor while waiting for a dbus-method response (considered time frame: between sending the method-call and receiving its response).  
 After the response is received, the (indefinitely) queued signal is not delivered unless another signal / method call is being received.  
 The basic setup: Two applications are
-communicating via dbus, using a select() loop waiting for events on their dbus-fds.  
+communicating via dbus, using a select()/poll()/epoll() loop waiting for events on their dbus-fds.  
 
 The faulty procedure provoking the issue:
 - Triggered by a timer event, Application A calls the dbus-method "transmit" of
@@ -21,6 +21,9 @@ Though
   the event was not signalled.  
 - other processes, not being “blocked” by waiting for a response-message, did also
   receive the signal.  
+
+Illustration:  
+![Illustration](illustration.png)  
 
 I saw this behavior on multiple platforms, e.g. Linux kubuntu 4.4.0-137-generic
 with 229-4ubuntu21.1 and Debian Buster 4.18.0-2-am64 with systemd 239-10.  

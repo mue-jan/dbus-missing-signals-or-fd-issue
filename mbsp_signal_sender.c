@@ -101,15 +101,15 @@ int main(int argc, char *argv[])
         if (fds[SDBUS].fd <= 0)
             printf("issue sd_bus_get_fd\n");
 
-        // make fd unblocking
-        ret = fcntl(fds[SDBUS].fd, F_SETFL, fcntl(fds[SDBUS].fd, F_GETFL, 0) | O_NONBLOCK);
-        if (ret == -1)
-            printf("issue sdbus-fcntl\n");
+//        // make fd unblocking
+//        ret = fcntl(fds[SDBUS].fd, F_SETFL, fcntl(fds[SDBUS].fd, F_GETFL, 0) | O_NONBLOCK);
+//        if (ret == -1)
+//            printf("issue sdbus-fcntl\n");
 
-        fds[SDBUS].events = sd_bus_get_events(sdbus_obj) | POLLIN;   // fixme: printf?!
+        fds[SDBUS].events = sd_bus_get_events(sdbus_obj); //| POLLIN;   // fixme: printf?!
         if (!fds[SDBUS].events)
             printf("issue with fds[JBUS].events\n");
-        printf("sd_bus_get_events(sdbus_obj): %i\n", sd_bus_get_events(sdbus_obj));
+        printf("\nsd_bus_get_events(sdbus_obj): %i\n", sd_bus_get_events(sdbus_obj));
 
         fds[SDBUS].revents = 0;
 
@@ -127,7 +127,7 @@ int main(int argc, char *argv[])
         fds[TIMER].events = POLLIN;   // fixme: ?!
         fds[TIMER].revents = 0;
 
-        ret = set_timer(fds[TIMER].fd, 1000);
+        ret = set_timer(fds[TIMER].fd, 2000);
         if (ret < 0)
             printf("issue set_timer\n");
 
@@ -156,32 +156,25 @@ int main(int argc, char *argv[])
                     break;
 
                 case POLLIN:
-                    if (i == SDBUS)
-                    {
-                        printf("Call on sd_bus-filedescriptor!\n");
-
-                        ret = handle_dbus_fd();
-                        if (ret < 0) {
-                            printf("Issue with sd_bus-filedescriptor!\n\n");
-                        }
-                    }
-                    else if (i == TIMER)
-                    {
-                        printf("Call on timer-filedescriptor!\n");
-
-                        ret = handle_timer_fd(fds[TIMER].fd, 1000);
-                        if (ret < 0) {
-                            printf("Issue with timer-filedescriptor!\n\n");
-                        }
-
-                        // FIXME: calling handle_dbus_fd() manually will cause signal reception
-                        // handle_dbus_fd();
-
-                    }
-                    break;
+                	if (i == TIMER)
+					{
+                    	printf("** CURRENT EVENT: TIMER-fd with revents: %i\n", fds[i].revents);
+						ret = handle_timer_fd(fds[TIMER].fd, 1000);
+						if (ret < 0) {
+							printf("Issue with timer-filedescriptor!\n\n");
+						}
+					}
+                	goto do_else;
+                	break;
 
                 default:
-                    printf("default case?! - fds[i].revents: %i\n", fds[i].revents);
+                	do_else:
+					if (i == SDBUS)
+	                	printf("** CURRENT EVENT: SDBUS-fd - revents: %i\n", fds[i].revents);
+                	ret = handle_dbus_fd();
+					if (ret < 0) {
+						printf("Issue with sdbus-filedescriptor!\n\n");
+					}
                     break;
             }
         }
@@ -220,13 +213,13 @@ void example_communication(void)
 
     ret = sd_bus_call(sdbus_obj,
                         dbus_msg,
-                        100000,             // 100ms
+                        50000,             // 50ms
                         &dbus_error,
                         &dbus_reply);
     if (ret < 0) {
         printf("sd_bus_call failed\n");
     } else {
-        printf("\n  SENDER - sent dbus-message \"%i\"\n", value);
+        printf("* SENDER - sent dbus-message \"%i\" + received response!\n", value);
     }
 
     printf("  SENDER - missing signals: '%i'\n", missing_signals);
@@ -242,7 +235,7 @@ void example_communication(void)
 
 
     sd_bus_message_unref(dbus_msg);
-    printf("  SENDER - finished periodic send-event.\n");
+    printf("* SENDER - finished periodic send-event.\n");
 
     missing_signals++;
     value++;

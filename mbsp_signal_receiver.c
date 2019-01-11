@@ -36,7 +36,10 @@ static const sd_bus_vtable object_vtable[] =
 
 int main(int argc, char *argv[])
 {
-    int ret = 0;
+	(void)argc;
+	(void)argv;
+
+	int ret = 0;
 
     fd_set readfds;
     int nfds, sdbus_fd, ready;
@@ -134,6 +137,9 @@ int main(int argc, char *argv[])
 static int transmit(sd_bus_message *dbus_msg, void *userdata,
                       sd_bus_error *ret_error)
 {
+	(void)userdata;
+	(void)ret_error;
+
     int ret = -1;
     int value = 0;
     sd_bus_message *dbus_signal = NULL;
@@ -155,6 +161,8 @@ static int transmit(sd_bus_message *dbus_msg, void *userdata,
 
     // SEND SIGNAL WHICH WILL BE LOST
     {
+        usleep(5000);
+
         ret = sd_bus_message_new_signal(sdbus_obj, &dbus_signal, object_path,
                                         interface_name, "test_signal");
         if (ret < 0) {
@@ -181,7 +189,7 @@ static int transmit(sd_bus_message *dbus_msg, void *userdata,
     printf("    RECEIVER - sent signal \"%i\" to caller, going to sleep ...\n",
                                                                         value);
     usleep(5000);
-    printf("    RECEIVER - slept for 5ms, sending dbus-msg response ...\n");
+    printf("    RECEIVER - slept for additional 5ms, prior sending sdbus-msg response ...\n");
 
     ret = sd_bus_message_append_basic(dbus_ret_msg, SD_BUS_TYPE_INT32, &value);
     if (ret < 0) {
